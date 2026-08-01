@@ -1,0 +1,7 @@
+_commit: 0.11.0
+_src_path: https://github.com/actcore/act-template-rust
+component_ref: actpkg.dev/library/search-searxng
+description: Search the web through a self-hosted SearXNG instance
+needs_filesystem: false
+needs_http: true
+project_name: search-searxng

@@ -1,0 +1,12 @@
+[std]
+name = "search-searxng"
+
+[std.capabilities."wasi:http"]
+description = """
+Queries a SearXNG instance chosen by the caller. The instance address is supplied per \
+call, so no fixed host can be declared here. Narrow this to your own instance at \
+deployment, e.g. --grant '{"wasi:http":{"mode":"allowlist","allow":[{"host":"searx.internal"}]}}'.
+"""
+
+[[std.capabilities."wasi:http".allow]]
+host = "*"
