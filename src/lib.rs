@@ -198,16 +198,38 @@ mod component {
     async fn search(#[args] args: SearchArgs) -> ActResult<SearchResponse> {
         let url = build_url(&args)?;
 
-        let response = wasi_fetch::Client::new()
+        let client = hclient::Client::builder(hclient_wasi::WasiHttp::new())
+            .build()
+            .map_err(|e| ActError::internal(format!("Cannot reach SearXNG: {e}")))?;
+        let response = client
             .get(&url)
-            .timeout(std::time::Duration::from_millis(
-                args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
-            ))
+            // `wasi_fetch::RequestBuilder::timeout` put one `Duration` into
+            // the wasip3 `connect` and `first_byte` options together;
+            // `hclient::Timeouts` keeps them as two fields, so both get the
+            // same value here or the connect timeout would be silently
+            // dropped. `Timeouts` is `#[non_exhaustive]` — start from the
+            // default and set what we mean.
+            .timeouts({
+                let d =
+                    std::time::Duration::from_millis(args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
+                let mut timeouts = hclient::Timeouts::default();
+                timeouts.connect = Some(d);
+                timeouts.first_byte = Some(d);
+                timeouts
+            })
             .send()
             .await
-            .map_err(|e| match e {
-                wasi_fetch::Error::Url(msg) => ActError::invalid_args(msg),
-                other => ActError::internal(format!("Cannot reach SearXNG: {other}")),
+            .map_err(|e| {
+                // A URL that does not parse — or, without more, a target no
+                // HTTP backend can serve — is the caller's argument, not a
+                // transport failure: `ErrorKind::Uri` (hclient 0.1.0-alpha.18
+                // gave the kind a name; before that the split went through
+                // `Error::source()`).
+                if matches!(e.kind(), hclient::ErrorKind::Uri) {
+                    ActError::invalid_args(e.to_string())
+                } else {
+                    ActError::internal(format!("Cannot reach SearXNG: {e}"))
+                }
             })?;
 
         let status = response.status().as_u16();
@@ -215,10 +237,12 @@ mod component {
             return Err(status_error(status));
         }
 
-        let body = response
-            .into_body()
-            .text()
+        let collected = response
+            .collect()
             .await
+            .map_err(|e| ActError::internal(format!("Cannot read SearXNG response: {e}")))?;
+        let body = collected
+            .text()
             .map_err(|e| ActError::internal(format!("Cannot read SearXNG response: {e}")))?;
 
         let wire: WireResponse = serde_json::from_str(&body).map_err(|e| {
